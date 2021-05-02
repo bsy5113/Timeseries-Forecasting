@@ -17,3 +17,5 @@
 ![image](https://user-images.githubusercontent.com/52574322/116802626-d5693880-aad9-11eb-967d-932fbfdcd0db.png)
 ![image](https://user-images.githubusercontent.com/52574322/116802629-da2dec80-aad9-11eb-848e-475d6442959e.png)
 
+## Please check out my youtube video for the presentation! Link below
+- https://www.youtube.com/watch?v=dFltytDM6EE&t=273s
