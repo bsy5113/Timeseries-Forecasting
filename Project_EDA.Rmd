@@ -1,0 +1,378 @@
+---
+title: "TS Project"
+author: "Bo Yun"
+date: "3/24/2021"
+output: html_document
+---
+
+# Introduction
+```{r}
+# Talk about data and how it can be useful
+# This data is Website traffic, which can be important for many reasons. The more people see your site, the more potential customers you will have. The number of visitors to your website becomes the number of opportunities your business has at giving an impression, generating qualified leads, sharing your brand and building relationships.
+
+
+# data source: https://www.kaggle.com/bobnau/daily-website-visitors
+```
+
+# Data import and clean
+```{r}
+library(dplyr)
+library(tswge)
+library(ggplot2)
+library(GGally)
+library(tseries)
+
+df=read.csv("~/Desktop/SMU/DS 6373 Time Series/Project/daily-website-visitors.csv")
+plotts.sample.wge(df$Page.Loads) 
+
+df=df[1:500,] #Trim down the data
+df
+dim(df) #2167 entries and 5 variables, Page.Loads is the response variable. 
+
+
+#--------------- Data cleaning - checking NA and data type---------------
+sum(is.na(df$col)) # No NA values
+
+#--------------- Data overview---------------
+plotts.sample.wge(df$Page.Loads) 
+mean(df$Page.Loads)
+```
+
+# Stationarity Check
+```{r}
+#--------------- Visual check ---------------
+plotts.sample.wge(df$Page.Loads) 
+aic5.wge(df$Page.Loads) #ARMA(5,2) for the target variable
+
+#--------------- Augmented Dickey-Fuller test ---------------
+adf.test(df$Page.Loads) # p-value smaller than 0.05 => Stationary 
+
+
+#--------------- Condition 1 - Constant mean ---------------
+mean(df$Page.Loads)
+# Appears to have constant mean
+
+
+
+#---------------Condition 2 - Constant variance ---------------
+# Appears to have constant variance 
+
+
+
+#--------------- Condition 3 - Constant correlation ---------------
+# Compare acf of first half and second half 
+df1=df[1:150,]
+df1
+df2=df[151:300,]
+df2
+acf(df1$Page.Loads) 
+acf(df2$Page.Loads)    # Compared => Constant correlation
+
+############# Conclusion ############
+# The data seems stationary 
+```
+
+# Model 1 - ARMA model (Univariate model)
+```{r}
+#--------------- Finding the best model based on AIC and BIC ---------------
+plotts.sample.wge(df$Page.Loads) 
+aic5.wge(df$Page.Loads) #ARMA(5,2) for both AIC and BIC
+aic5.wge(df$Page.Loads, type='bic')
+acf(df$Page.Loads)
+pacf(df$Page.Loads)
+
+
+#--------------- Checking cross correlation between variables to see lag efffect ---------------
+ccf(df$Page.Loads,df$Unique.Visits)  # no lag
+ccf(df$Page.Loads,df$First.Time.Visits) # no lag
+ccf(df$Page.Loads,df$Returning.Visits) # no lag
+
+
+fit=est.arma.wge(df$Page.Loads,p=5,q=2)
+fit  
+
+mean(df$Page.Loads)
+
+#phi=1.7891, -2.0469 ,1.7728 ,-1.3226, 0.7625
+#theta=1.0121871, -0.7784402
+#mean=3954.95
+#variance=174725.7
+#aic=12.12
+
+#------------- factoring the phi and theta for the equation write up --------------
+factor.wge(phi=c(1.7891, -2.0469 ,1.7728 ,-1.3226, 0.7625))
+factor.wge(phi=c(1.0121871, -0.7784402))
+
+
+#--------------- Final ARMA model - factored form ---------------
+# (1-0.9729B)(1-1.2426B+0.9954B^2)(1+0.4264B+0.7873B^2)(Xt-3954.95)=(1-1.0122B+0.7784B^2)at, variance=181171.8
+
+
+#-----------------Validating the model - Last 10 data points - ASE ------------
+f=fore.arma.wge(df$Page,phi=c(1.7891, -2.0469 ,1.7728 ,-1.3226, 0.7625),theta=c(1.0121871, -0.7784402), n.ahead=10,limits=F, lastn=T, plot=T)
+plot(as.numeric(df$Page.Loads), type = "l", xlim = c(200,520))
+lines(seq(491,500,1),f[[1]], col = "red")
+
+# ASE
+ASE=mean((f$f-df$Page.Loads[491:500])^2)
+ASE
+
+
+#--------------- Validating the model - Rolling ASE -----------------
+# Model 
+phis = c(1.7891, -2.0469 ,1.7728 ,-1.3226, 0.7625 )
+thetas = c(1.0121871, -0.7784402)
+s  = 0
+d  = 0
+
+
+trainingSize = 100
+test = 10
+ASEHolder = numeric()
+
+for( i in 1:(500-(trainingSize + test) + 1))
+{
+  forecasts = fore.arma.wge(df$Page.Loads[i:(i+(trainingSize-1))],phi = phis, theta = thetas,n.ahead = test)
+  
+  ASE = mean((df$Page.Loads[(trainingSize+i):(trainingSize+ i + (test) - 1)] - forecasts$f)^2)
+  
+  ASEHolder[i] = ASE
+  if(i == 105) 
+  {print(forecasts$f)}
+}
+ASEHolder<-ASEHolder[!is.na(ASEHolder)]
+ASEHolder
+hist(ASEHolder)
+
+WindowedASE = mean(ASEHolder)
+summary(ASEHolder)
+WindowedASE
+
+# Visualization
+i = 100
+fs = fore.arma.wge(df$Page.Loads[i:(i+(trainingSize+test)-1)],phi = phis, theta = thetas,n.ahead = 10, lastn = TRUE, limit=FALSE)
+ASE = mean((df$Page.Loads[(i+trainingSize):(i+(trainingSize+test)-1)] - fs$f )^2)
+ASE
+
+
+
+#------------------------------ Short term prediction - 20 points ahead ------------------------------
+f=fore.arma.wge(df$Page,phi=c(1.7891, -2.0469 ,1.7728 ,-1.3226, 0.7625),theta=c(1.0121871, -0.7784402), n.ahead=20,limits=T, lastn=F, plot=T)
+plot(as.numeric(df$Page), type = "l", xlim = c(1,510))
+lines(seq(500,519,1),f[[1]], col = "red")
+
+
+#------------------------------ Long term prediction - 200 points ahead ------------------------------
+f=fore.arma.wge(df$Page,phi=c(1.7891, -2.0469 ,1.7728 ,-1.3226, 0.7625),theta=c(1.0121871, -0.7784402), n.ahead=200,limits=T, lastn=F, plot=T)
+plot(as.numeric(df$Page), type = "l", xlim = c(1,710))
+lines(seq(500,699,1),f[[1]], col = "red")
+
+```
+
+
+# Model 2 - ARIMA model - (1-B)(1-B^s) (Univariate model), Non-stationary
+```{r}
+#--------------- Taking out (1-B) unit roots term ---------------
+
+
+# Identify non-stationarities using Tiao/Tsay overfitting table, i-> Both high AR models show (1-B) term once
+est.ar.wge(df$Page.Loads, p=6, type='burg')
+est.ar.wge(df$Page.Loads, p=8, type='burg')
+
+plotts.sample.wge(df$Page.Loads) 
+
+
+#--------------- Identify seasonality using overfitting---------------
+factor.wge(phi=c(rep(0,6),1)) # It appears that the period is 7 from realization and acf plot. Compare this with an overfitting AR model 
+est.ar.wge(df$Page.Loads, p=14, type='burg')
+
+
+#--------------- Differencing the original data with (1-B) and (1-B^7)---------------
+y=artrans.wge(df$Page.Loads,phi.tr=1)
+y=artrans.wge(y,phi.tr=c(rep(0,6),1))
+
+acf(y) # Visually looks white noise 
+ljung.wge(y) # Ljung box method doesn't quite qualify it as a white noise. 
+
+#--------------- Finding ARMA model for the difference data---------------
+aic5.wge(y) #ARMA(3,1) 
+aic5.wge(y,type='bic')
+fit=est.arma.wge(y,p=3,q=1)
+mean(df$Page.Loads)
+
+?fore.aruma.wge
+
+#----------------- Final ARIMA model - factored form -----------------
+# (1-B)(1-0.8404B)(1-0.0107B+0.1290B^2)(1-B^7)(Xt-3954.95)=(1-B)at, variance=141342.4
+
+factor.wge(phi=c(1.7891, -2.0469 ,1.7728 ,-1.3226, 0.7625))
+
+#----------------- Validating the model - Last 20 data points - ASE -----------------
+f=fore.aruma.wge(df$Page.Loads,phi=c(0.8511057 ,-0.1379100 , 0.1083783),theta=c(0.999999995),d=1,s=7,n.ahead=10,limits=F, lastn=T, plot=T)
+
+plot(as.numeric(df$Page.Loads), type = "l", xlim = c(1,520))
+lines(seq(491,500,1),f[[1]], col = "red")
+
+# ASE
+ASE=mean((f$f-df$Page.Loads[491:500])^2)
+ASE
+
+
+#----------------- Validating the model - Rolling ASE -----------------
+# Model 
+phis = c(0.8511057 ,-0.1379100 , 0.1083783)
+thetas = c(1)
+s  = 7
+d  = 1
+
+
+trainingSize = 100
+test = 10
+ASEHolder = numeric()
+
+for( i in 1:(500-(trainingSize + test) + 1))
+{
+  forecasts = fore.arma.wge(df$Page.Loads[i:(i+(trainingSize-1))],phi = phis, theta = thetas,n.ahead = test)
+  
+  ASE = mean((df$Page.Loads[(trainingSize+i):(trainingSize+ i + (test) - 1)] - forecasts$f)^2)
+  
+  ASEHolder[i] = ASE
+  if(i == 105) 
+  {print(forecasts$f)}
+}
+ASEHolder<-ASEHolder[!is.na(ASEHolder)]
+ASEHolder
+hist(ASEHolder)
+
+WindowedASE = mean(ASEHolder)
+summary(ASEHolder)
+WindowedASE
+
+# Visualization
+i = 80
+fs = fore.aruma.wge(df$Page.Loads[i:(i+(trainingSize+test)-1)],phi = phis, theta = thetas,s=7, d=1,n.ahead = 10, lastn = TRUE, limit=FALSE)
+ASE = mean((df$Page.Loads[(i+trainingSize):(i+(trainingSize+test)-1)] - fs$f )^2)
+ASE
+
+
+#--------------- Short term prediction - 20 points ahead ---------------
+f=fore.aruma.wge(df$Page,phi=c(0.8511057 ,-0.1379100 , 0.1083783),theta=c(0.999999995),d=1,s=7,n.ahead=20,limits=T, lastn=F, plot=T)
+plot(as.numeric(df$Page), type = "l", xlim = c(1,520))
+lines(seq(500,519,1),f[[1]], col = "red")
+
+
+#---------------Long term prediction - 200 points ahead ---------------
+f=fore.aruma.wge(df$Page,phi=c(0.8511057 ,-0.1379100 , 0.1083783),theta=c(0.999999995),d=1,s=7,n.ahead=200,limits=T, lastn=F, plot=T)
+plot(as.numeric(df$Page), type = "l", xlim = c(1,710),ylim=c(1,20000))
+lines(seq(500,699,1),f[[1]], col = "red")
+
+```
+
+
+# Model 3 - ARIMA model - (1-B^365)(1-B^7) (Univariate model) - Non-stationary
+```{r}
+#----------------- Taking out (1-B) unit roots term -----------------
+
+
+# Identify seasonality using overfitting (365 and 7 days)
+factor.wge(phi=c(rep(0,364),1)) # It appears that the period is 365 from realization 
+
+
+factor.wge(phi=c(rep(0,6),1)) # It appears that the period is 7 from realization and acf plot. Compare this with an overfitting AR model 
+est.ar.wge(df$Page.Loads, p=14, type='burg')
+
+
+#--------------- Differencing the original data with (1-B^365) and (1-B^7)---------------
+y=artrans.wge(df$Page.Loads,phi.tr=c(rep(0,364),1))
+y=artrans.wge(y,phi.tr=c(rep(0,6),1))
+
+acf(y) # Visually looks white noise 
+ljung.wge(y,K=24)
+ljung.wge(y,K=48) # Ljung box method doesn't quite qualify it as a white noise. 
+
+# Finding ARMA model for the difference data
+aic5.wge(y) #ARMA(3,2) 
+fit=est.arma.wge(y,p=3,q=2)
+mean(df$Page.Loads)
+
+
+
+#-------------------Final ARIMA model - factored form ------------------
+# (1-B^365)(1-B^7)(1-0.4877B)(1-0.6857B+0.9810B^2)(Xt-3954.95)=(1-0.7709B+1.0000B^2)at, variance=141342.4
+
+# factor.wge(phi=c(1.1734189 ,-1.3154322,  0.4784634))  #for phi
+# factor.wge(phi=c(0.7709449, -1))  # for theta
+
+
+#--------------- Validating the model - Last 20 data points - ASE -----------------
+
+f=fore.aruma.wge(df$Page,phi=c(1.1734189 ,-1.3154322,  0.4784634),theta=c(0.7709449, -1),lambda=c(rep(0,6),1,rep(0,357),1,rep(0,6),1),n.ahead=10,limits=F, lastn=T, plot=T)
+
+plot(as.numeric(df$Page.Loads), type = "l", xlim = c(1,520),ylim=c(-6000,7000))
+lines(seq(491,500,1),f[[1]], col = "red")
+
+c(rep(0,6),1,rep(0,3))
+# ASE
+ASE=mean((f$f-df$Page.Loads[491:500])^2)
+ASE
+
+
+#--------------- Validating the model - Rolling ASE ############
+# # Model 
+# phis = c(1.1734189 ,-1.3154322,  0.4784634)
+# thetas = c(0.7709449, -1)
+# s  = 0
+# d  = 0
+# 
+# 
+# trainingSize = 100
+# test = 10
+# ASEHolder = numeric()
+# 
+# for( i in 1:(500-(trainingSize + test) + 1))
+# {
+#   forecasts = fore.aruma.wge(df$Page.Loads[i:(i+(trainingSize-1))],phi = phis, theta = thetas,lambda=c(rep(0,6),1,rep(0,357),1,rep(0,6),1), n.ahead = test)
+#   
+#   ASE = mean((x[(trainingSize+i):(trainingSize+ i + (test) - 1)] - forecasts$f)^2)
+#   
+#   ASEHolder[i] = ASE
+#   if(i == 105) 
+#   {print(forecasts$f)}
+# }
+# ASEHolder<-ASEHolder[!is.na(ASEHolder)]
+# ASEHolder
+# hist(ASEHolder)
+# 
+# WindowedASE = mean(ASEHolder)
+# summary(ASEHolder)
+# WindowedASE
+# 
+# # Visualization
+# i = 80
+# fs = fore.aruma.wge(df$Page.Loads[i:(i+(trainingSize+test)-1)],phi = phis, theta = thetas,lambda=c(rep(0,6),1,rep(0,357),1,rep(0,6),1),n.ahead = 10, lastn = TRUE, limit=FALSE)
+# ASE = mean((x[(i+trainingSize):(i+(trainingSize+test)-1)] - fs$f )^2)
+# ASE
+
+
+
+
+
+#--------------- Short term prediction - 20 points ahead ---------------
+f=fore.aruma.wge(df$Page,phi=c(1.1734189 ,-1.3154322,  0.4784634),theta=c(0.7709449, -1),lambda=c(rep(0,6),1,rep(0,357),1,rep(0,6),1), n.ahead=20,limits=T, lastn=F, plot=T)
+plot(as.numeric(df$Page), type = "l", xlim = c(1,520),ylim=c(-5000,10000))
+lines(seq(500,519,1),f[[1]], col = "red")
+
+
+#--------------- Long term prediction - 200 points ahead ---------------
+f=fore.aruma.wge(df$Page,phi=c(1.1734189 ,-1.3154322,  0.4784634),theta=c(0.7709449, -1),lambda=c(rep(0,6),1,rep(0,357),1,rep(0,6),1), n.ahead=200,limits=T, lastn=F, plot=T)
+plot(as.numeric(df$Page), type = "l", xlim = c(1,710),ylim=c(-90000,80000))
+lines(seq(500,699,1),f[[1]], col = "red")
+```
+
+
+# Plan for the rest of the project
+```{r}
+##In the next session, I will be presenting multivariate time series analysis that utilizes other variables in the model. Multiple regression, vector autregressive, neural network and ensemble of different models will be compared. 
+```
+
+
